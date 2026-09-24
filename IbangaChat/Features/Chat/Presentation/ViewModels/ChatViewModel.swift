@@ -7,6 +7,7 @@ final class ChatViewModel {
     struct Row: Identifiable, Equatable {
         enum Kind: Equatable {
             case day(Date)
+            case unreadDivider(count: Int)
             case message(Message, isFirstInGroup: Bool, isLastInGroup: Bool)
         }
 
@@ -21,6 +22,7 @@ final class ChatViewModel {
         let reconnectToPeer: ReconnectToPeerUseCase
     }
 
+    static let unreadDividerID = "unread-divider"
     private static let groupingInterval: TimeInterval = 3 * 60
     private static let bubbleThumbnailSize = 720
     private static let composerThumbnailSize = 180
@@ -35,6 +37,9 @@ final class ChatViewModel {
     private(set) var notice: String?
     private(set) var isReconnecting = false
     private(set) var hasLoaded = false
+    /// Where "unread messages" begins, captured when the chat opens and kept until it closes.
+    private(set) var firstUnreadMessageID: UUID?
+    private(set) var unreadCountAtOpen = 0
 
     private let chat: any ChatRepositoryProtocol
     private let sessions: any SessionRepositoryProtocol
@@ -93,6 +98,9 @@ final class ChatViewModel {
             if previous.map({ !calendar.isDate($0.sentAt, inSameDayAs: message.sentAt) }) ?? true {
                 rows.append(Row(id: "day-\(message.id)", kind: .day(message.sentAt)))
             }
+            if message.id == firstUnreadMessageID {
+                rows.append(Row(id: Self.unreadDividerID, kind: .unreadDivider(count: unreadCountAtOpen)))
+            }
             rows.append(Row(
                 id: message.id.uuidString,
                 kind: .message(
@@ -109,7 +117,16 @@ final class ChatViewModel {
 
     func load() async {
         await chat.loadMessages(in: conversationID)
+        let unread = messages.filter(\.isUnread)
+        firstUnreadMessageID = unread.first?.id
+        unreadCountAtOpen = unread.count
         hasLoaded = true
+        chat.setActiveConversation(conversationID)
+    }
+
+    func setVisible(_ isVisible: Bool) {
+        guard hasLoaded else { return }
+        chat.setActiveConversation(isVisible ? conversationID : nil)
     }
 
     func dismissNotice() {

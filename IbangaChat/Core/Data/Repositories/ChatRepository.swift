@@ -13,7 +13,9 @@ final class ChatRepository: ChatRepositoryProtocol {
     @ObservationIgnored private let sessions: any SessionRepositoryProtocol
     @ObservationIgnored private let logger: SecureLogger
     @ObservationIgnored private var localPeerID: Peer.ID?
+    @ObservationIgnored private var activeConversationID: Conversation.ID?
 
+    private static let maximumSearchResults = 50
     private static let encoder = JSONEncoder()
     private static let decoder = JSONDecoder()
 
@@ -154,6 +156,7 @@ final class ChatRepository: ChatRepositoryProtocol {
         let sealedAttachment = try await sealAttachment(of: content, data: attachmentData)
         guard findMessageRecord(id: envelope.messageID) == nil else { return false }
 
+        let isUnread = activeConversationID != record.id
         let messageRecord = MessageRecord(
             id: envelope.messageID,
             direction: .incoming,
@@ -161,6 +164,7 @@ final class ChatRepository: ChatRepositoryProtocol {
             status: .received,
             sentAt: sentAt,
             sealedBody: sealedBody,
+            isUnread: isUnread,
             conversation: record
         )
         context.insert(messageRecord)
@@ -178,9 +182,42 @@ final class ChatRepository: ChatRepositoryProtocol {
             direction: .incoming,
             content: content,
             sentAt: sentAt,
-            status: .received
+            status: .received,
+            isUnread: isUnread
         ), into: record)
         return true
+    }
+
+    func setActiveConversation(_ conversationID: Conversation.ID?) {
+        activeConversationID = conversationID
+        if let conversationID {
+            markRead(conversationID)
+        }
+    }
+
+    /// Searches message text in memory. Decrypted content is never written to a search index.
+    func searchMessages(matching query: String) async -> [Message] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, let records = try? context.fetch(FetchDescriptor<ConversationRecord>()) else { return [] }
+
+        var matches: [Message] = []
+        for record in records {
+            let candidates: [Message]
+            if let loaded = messagesByConversation[record.id] {
+                candidates = loaded
+            } else {
+                var decrypted: [Message] = []
+                for stored in record.messages.filter({ $0.kind == .text }).map(StoredMessage.init) {
+                    if let message = await decrypt(stored, in: record) {
+                        decrypted.append(message)
+                    }
+                }
+                candidates = decrypted
+            }
+            guard !Task.isCancelled else { return [] }
+            matches += candidates.filter { $0.text?.localizedStandardContains(query) == true }
+        }
+        return Array(matches.sorted { $0.sentAt > $1.sentAt }.prefix(Self.maximumSearchResults))
     }
 
     func attachmentData(for attachment: Attachment) async -> Data? {
@@ -222,7 +259,13 @@ final class ChatRepository: ChatRepositoryProtocol {
             if let latest = record.messages.max(by: { $0.sentAt < $1.sentAt }) {
                 lastMessage = await decrypt(StoredMessage(latest), in: record)
             }
-            summaries.append(Conversation(id: record.id, peer: peer, lastMessage: lastMessage, lastActivityAt: record.lastActivityAt))
+            summaries.append(Conversation(
+                id: record.id,
+                peer: peer,
+                lastMessage: lastMessage,
+                lastActivityAt: record.lastActivityAt,
+                unreadCount: Self.unreadCount(in: record)
+            ))
         }
         conversations = summaries
     }
@@ -230,7 +273,13 @@ final class ChatRepository: ChatRepositoryProtocol {
     @discardableResult
     private func refreshSummary(for record: ConversationRecord, lastMessage: Message?) -> Conversation? {
         guard let peer = record.peer.map(Self.peer) else { return nil }
-        let summary = Conversation(id: record.id, peer: peer, lastMessage: lastMessage, lastActivityAt: record.lastActivityAt)
+        let summary = Conversation(
+            id: record.id,
+            peer: peer,
+            lastMessage: lastMessage,
+            lastActivityAt: record.lastActivityAt,
+            unreadCount: Self.unreadCount(in: record)
+        )
 
         conversations.removeAll { $0.id == record.id }
         let index = conversations.firstIndex { $0.lastActivityAt < summary.lastActivityAt } ?? conversations.endIndex
@@ -248,6 +297,27 @@ final class ChatRepository: ChatRepositoryProtocol {
         let current = conversation(id: record.id)?.lastMessage
         let latest = current.map { $0.sentAt > message.sentAt ? $0 : message } ?? message
         refreshSummary(for: record, lastMessage: latest)
+    }
+
+    private func markRead(_ conversationID: Conversation.ID) {
+        guard let record = findConversationRecord(id: conversationID) else { return }
+        let unread = record.messages.filter(\.isUnread)
+        guard !unread.isEmpty else { return }
+
+        unread.forEach { $0.isUnread = false }
+        save()
+
+        if var loaded = messagesByConversation[conversationID] {
+            for index in loaded.indices where loaded[index].isUnread {
+                loaded[index].isUnread = false
+            }
+            messagesByConversation[conversationID] = loaded
+        }
+        refreshSummary(for: record, lastMessage: conversation(id: conversationID)?.lastMessage)
+    }
+
+    private static func unreadCount(in record: ConversationRecord) -> Int {
+        record.messages.count { $0.isUnread }
     }
 
     private func updateStatus(of messageID: UUID, to status: MessageStatus, onlyIfCurrently expected: MessageStatus? = nil) {
@@ -379,7 +449,8 @@ final class ChatRepository: ChatRepositoryProtocol {
                 direction: stored.direction,
                 content: content,
                 sentAt: stored.sentAt,
-                status: stored.status
+                status: stored.status,
+                isUnread: stored.isUnread
             )
         } catch {
             // Content that fails authentication is never displayed.
@@ -437,6 +508,7 @@ private struct StoredMessage {
     let status: MessageStatus
     let sentAt: Date
     let sealedBody: Data
+    let isUnread: Bool
 
     init(_ record: MessageRecord) {
         id = record.id
@@ -444,5 +516,6 @@ private struct StoredMessage {
         status = record.status
         sentAt = record.sentAt
         sealedBody = record.sealedBody
+        isUnread = record.isUnread
     }
 }

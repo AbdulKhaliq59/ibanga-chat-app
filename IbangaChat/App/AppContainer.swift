@@ -4,6 +4,7 @@ import SwiftUI
 final class AppContainer {
     let appState: AppState
     let persistence: PersistenceController
+    let appearance = AppearanceSettings()
 
     private let identityRepository: any IdentityRepositoryProtocol
     private let sessionRepository: any SessionRepositoryProtocol
@@ -91,7 +92,7 @@ final class AppContainer {
             viewModel: ConversationsViewModel(chat: chatRepository, sessions: sessionRepository),
             destinations: ConversationsDestinations(
                 chat: { [unowned self] id in AnyView(ChatView(viewModel: makeChatViewModel(conversationID: id))) },
-                security: { [unowned self] in AnyView(SecurityView(viewModel: makeSecurityViewModel(identity: identity))) },
+                settings: { [unowned self] in AnyView(makeSettingsView(identity: identity)) },
                 pairing: { [unowned self] onConnected in
                     AnyView(PairingView(viewModel: makePairingViewModel(onConnected: onConnected)))
                 }
@@ -122,6 +123,20 @@ final class AppContainer {
             sessions: sessionRepository,
             connectToPeer: ConnectToPeerUseCase(chat: chatRepository, sessions: sessionRepository),
             onConnected: onConnected
+        )
+    }
+
+    func makeSettingsView(identity: DeviceIdentity) -> SettingsView {
+        SettingsView(
+            viewModel: SettingsViewModel(
+                identity: identity,
+                sessions: sessionRepository,
+                appearanceSettings: appearance,
+                updateDisplayName: UpdateDisplayNameUseCase(sessions: sessionRepository)
+            ),
+            securityDestination: { [unowned self] in
+                AnyView(SecurityView(viewModel: makeSecurityViewModel(identity: identity)))
+            }
         )
     }
 

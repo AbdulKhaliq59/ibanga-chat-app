@@ -8,7 +8,7 @@ struct ChatView: View {
     @State private var peerSecurity: PeerSecurityViewModel?
     @State private var viewedPhoto: Attachment?
 
-    @State private var isShowingAttachmentOptions = false
+    @State private var isShowingAttachmentTray = false
     @State private var isShowingPhotoPicker = false
     @State private var isShowingFileImporter = false
     @State private var isShowingCamera = false
@@ -17,6 +17,7 @@ struct ChatView: View {
     @State private var showsSecureConfirmation = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     private static let incomingTransferRowID = "incoming-transfer"
 
@@ -26,6 +27,22 @@ struct ChatView: View {
 
     var body: some View {
         messageList
+            .overlay {
+                if isShowingAttachmentTray {
+                    Color.black.opacity(0.18)
+                        .ignoresSafeArea(edges: .top)
+                        .onTapGesture { setAttachmentTray(open: false) }
+                        .transition(.opacity)
+                        .accessibilityHidden(true)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if isShowingAttachmentTray {
+                    AttachmentTray(options: attachmentOptions, onSelect: selectAttachmentSource)
+                        .padding(.bottom, IbangaSpacing.s)
+                        .transition(trayTransition)
+                }
+            }
             .background(IbangaColors.background.ignoresSafeArea())
             .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
             .navigationBarTitleDisplayMode(.inline)
@@ -34,15 +51,6 @@ struct ChatView: View {
             }
             .sheet(item: $peerSecurity) { viewModel in
                 PeerSecurityView(viewModel: viewModel)
-            }
-            .confirmationDialog("Add Attachment", isPresented: $isShowingAttachmentOptions, titleVisibility: .visible) {
-                Button("Photos") { isShowingPhotoPicker = true }
-                Button("Files") { isShowingFileImporter = true }
-                if CameraPicker.isAvailable {
-                    Button("Camera") { isShowingCamera = true }
-                }
-            } message: {
-                Text("Attachments are encrypted automatically before they leave this device.")
             }
             .photosPicker(isPresented: $isShowingPhotoPicker, selection: $photoSelection, matching: .images)
             .fileImporter(isPresented: $isShowingFileImporter, allowedContentTypes: [.item]) { result in
@@ -91,7 +99,17 @@ struct ChatView: View {
                     scrolledRowID = Self.incomingTransferRowID
                 }
             }
-            .task { await viewModel.load() }
+            .task {
+                await viewModel.load()
+                if viewModel.firstUnreadMessageID != nil {
+                    scrolledRowID = ChatViewModel.unreadDividerID
+                }
+            }
+            .onAppear { viewModel.setVisible(true) }
+            .onDisappear { viewModel.setVisible(false) }
+            .onChange(of: scenePhase) { _, phase in
+                viewModel.setVisible(phase == .active)
+            }
             .sensoryFeedback(.impact(weight: .light), trigger: viewModel.messages.count)
             .sensoryFeedback(.success, trigger: showsSecureConfirmation) { _, isShowing in isShowing }
     }
@@ -164,7 +182,8 @@ struct ChatView: View {
                 pendingAttachment: viewModel.pendingAttachment,
                 pendingThumbnail: viewModel.pendingThumbnail,
                 isPreparingAttachment: viewModel.isPreparingAttachment,
-                onAddAttachment: { isShowingAttachmentOptions = true },
+                isAttachmentTrayOpen: isShowingAttachmentTray,
+                onAddAttachment: { setAttachmentTray(open: !isShowingAttachmentTray) },
                 onRemoveAttachment: viewModel.removePendingAttachment,
                 onSend: { Task { await viewModel.send() } }
             )
@@ -199,6 +218,8 @@ struct ChatView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, IbangaSpacing.m)
                 .accessibilityAddTraits(.isHeader)
+        case .unreadDivider(let count):
+            UnreadDivider(count: count)
         case let .message(message, isFirst, isLast):
             MessageBubble(
                 message: message,
@@ -234,6 +255,34 @@ struct ChatView: View {
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
         .padding(.top, 120)
+    }
+
+    private var attachmentOptions: [AttachmentTray.Option] {
+        CameraPicker.isAvailable ? [.photos, .camera, .document] : [.photos, .document]
+    }
+
+    private var trayTransition: AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .asymmetric(
+                insertion: .scale(scale: 0.6, anchor: .bottomLeading).combined(with: .opacity).combined(with: .offset(y: 20)),
+                removal: .scale(scale: 0.9, anchor: .bottomLeading).combined(with: .opacity)
+            )
+    }
+
+    private func setAttachmentTray(open: Bool) {
+        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.35, bounce: 0.25)) {
+            isShowingAttachmentTray = open
+        }
+    }
+
+    private func selectAttachmentSource(_ option: AttachmentTray.Option) {
+        setAttachmentTray(open: false)
+        switch option {
+        case .photos: isShowingPhotoPicker = true
+        case .camera: isShowingCamera = true
+        case .document: isShowingFileImporter = true
+        }
     }
 
     private var messageTransition: AnyTransition {
@@ -335,6 +384,33 @@ private struct ConnectionBanner: View {
         case .inProgress, .established:
             EmptyView()
         }
+    }
+}
+
+private struct UnreadDivider: View {
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: IbangaSpacing.m) {
+            line
+            Text(count == 1 ? "1 unread message" : "\(count) unread messages")
+                .font(IbangaTypography.caption.weight(.semibold))
+                .foregroundStyle(IbangaColors.accent)
+                .padding(.horizontal, IbangaSpacing.m)
+                .padding(.vertical, IbangaSpacing.xs)
+                .background(IbangaColors.accentSoft, in: .capsule)
+                .fixedSize()
+            line
+        }
+        .padding(.vertical, IbangaSpacing.m)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private var line: some View {
+        Rectangle()
+            .fill(IbangaColors.accent.opacity(0.3))
+            .frame(height: 1)
     }
 }
 

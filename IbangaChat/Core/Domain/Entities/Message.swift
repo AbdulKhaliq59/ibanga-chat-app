@@ -21,6 +21,7 @@ nonisolated struct Message: Identifiable, Hashable, Sendable {
     let content: MessageContent
     let sentAt: Date
     var status: MessageStatus
+    var isUnread = false
 
     var kind: MessageKind { content.kind }
 

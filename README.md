@@ -38,11 +38,16 @@ Security is not a feature toggle. The user never chooses to "encrypt", and there
 - **Authenticated secure sessions** with live connection states: *Connecting… → Establishing secure session… → Secure connection established*.
 - **Automatic reconnection** to known peers when they come back into range.
 - **Encrypted text messaging** with grouping, day separators, delivery states (*Sending → Sent → Delivered*) and retry for failed messages.
+- **Unread tracking**: count badges in the conversation list, and a "N unread messages" divider when you open a chat.
+- **Search** across conversation names and message text, performed in memory over decrypted content.
+- **Attachment tray** (Photos · Camera · Document) that springs up from the composer.
 - **Photo attachments** from PhotosPicker or the camera. Photos are resized, re-encoded and stripped of EXIF/GPS metadata before encryption, and open in a full-screen viewer with zoom.
 - **File attachments** from the Files app (up to 25 MB), shown with type and size and opened in Quick Look.
 - **Real transfer progress** for attachments, on both the sending and receiving device.
 - **Peer verification**: a 12-digit code derived from both identity keys, which can be marked as verified.
 - **Security screen** showing the device fingerprint, protection details, live connection status and an on-device cryptographic self-check.
+- **Settings**: change your display name, and choose System, Light or Dark. The theme is applied at the window level, so system screens such as Quick Look and the photo picker follow it too.
+- **An original app icon**: a speech bubble with a keyhole. It's drawn once as a SwiftUI `Shape`, used in the app, and rendered into the icon (light, dark and tinted) by `scripts/generate-app-icon.sh`.
 - **Light and Dark mode**, Dynamic Type, VoiceOver labels, Reduce Motion support and haptics.
 
 ## Architecture
@@ -66,6 +71,7 @@ IbangaChat/
     ├── Conversations/   Presentation
     ├── Pairing/         Domain · Presentation
     ├── Chat/            Domain · Data (media) · Presentation
+    ├── Settings/        Domain · Presentation
     └── Security/        Domain · Data · Presentation
 ```
 
@@ -192,6 +198,7 @@ Opened files are decrypted to a temporary file with `completeFileProtection`. It
   - `AttachmentRecord`: *sealed* bytes in external storage.
 - **Encryption at rest.** Message and attachment content is encrypted with the Keychain storage key. The associated data binds each ciphertext to its record ID, so encrypted bodies can't be swapped between records.
 - **Decrypted only in memory.** Content is decrypted when a conversation is opened. Anything that fails authentication is not displayed.
+- **No plaintext search index.** Search decrypts in memory and never writes an index to disk. Read state is a plain boolean that reveals nothing about content.
 - **Not in backups or iCloud.** The store is excluded from backups and CloudKit sync is disabled. It would be useless off-device anyway, because the keys are device-only.
 
 ## Requirements
@@ -217,6 +224,7 @@ The quickest way to see two devices talking is the bundled script. It builds onc
 ```bash
 ./scripts/run-simulators.sh           # build and launch on both
 ./scripts/run-simulators.sh --reset   # uninstall first: fresh onboarding and new identities
+./scripts/generate-app-icon.sh        # re-render the app icon from IbangaLogoShape
 ```
 
 Then:

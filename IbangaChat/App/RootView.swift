@@ -28,6 +28,7 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.35), value: appState.phase)
+        .onAppear { container.appearance.apply() }
         .task { await appState.bootstrap() }
     }
 }

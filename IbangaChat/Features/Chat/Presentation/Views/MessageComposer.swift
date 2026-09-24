@@ -6,6 +6,7 @@ struct MessageComposer: View {
     var pendingAttachment: AttachmentDraft?
     var pendingThumbnail: CGImage?
     var isPreparingAttachment = false
+    var isAttachmentTrayOpen = false
     var onAddAttachment: () -> Void = {}
     var onRemoveAttachment: () -> Void = {}
     let onSend: () -> Void
@@ -26,6 +27,7 @@ struct MessageComposer: View {
                             Image(systemName: IbangaIcons.plus)
                                 .font(.body.weight(.semibold))
                                 .foregroundStyle(IbangaColors.accent)
+                                .rotationEffect(.degrees(isAttachmentTrayOpen ? 45 : 0))
                         }
                     }
                     .frame(width: 36, height: 36)
@@ -33,7 +35,7 @@ struct MessageComposer: View {
                 }
                 .disabled(isPreparingAttachment)
                 .padding(.bottom, 2)
-                .accessibilityLabel("Add attachment")
+                .accessibilityLabel(isAttachmentTrayOpen ? "Close attachments" : "Add attachment")
 
                 TextField("Message", text: $text, axis: .vertical)
                     .font(IbangaTypography.body)
@@ -64,6 +66,7 @@ struct MessageComposer: View {
         .background(.bar)
         .animation(.easeOut(duration: 0.15), value: canSend)
         .animation(.easeOut(duration: 0.2), value: pendingAttachment)
+        .animation(.spring(duration: 0.3, bounce: 0.3), value: isAttachmentTrayOpen)
         .sensoryFeedback(.impact(weight: .light), trigger: pendingAttachment != nil) { _, isAttached in isAttached }
     }
 }

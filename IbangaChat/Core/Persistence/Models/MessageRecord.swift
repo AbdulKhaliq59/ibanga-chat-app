@@ -9,6 +9,7 @@ final class MessageRecord {
     var statusRawValue: String
     var sentAt: Date
     var sealedBody: Data
+    var isUnread: Bool = false
     var conversation: ConversationRecord?
 
     @Relationship(deleteRule: .cascade, inverse: \AttachmentRecord.message)
@@ -36,6 +37,7 @@ final class MessageRecord {
         status: MessageStatus,
         sentAt: Date,
         sealedBody: SealedPayload,
+        isUnread: Bool = false,
         conversation: ConversationRecord
     ) {
         self.id = id
@@ -44,6 +46,7 @@ final class MessageRecord {
         self.statusRawValue = status.rawValue
         self.sentAt = sentAt
         self.sealedBody = sealedBody.combined
+        self.isUnread = isUnread
         self.conversation = conversation
     }
 }
