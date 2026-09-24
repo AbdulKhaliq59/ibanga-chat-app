@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 #
 # Builds Ibanga once and launches it side by side on iPhone 17 and iPhone 17 Pro.
+# Run ./scripts/setup.sh once first on a new Mac.
 #
 # Usage:
 #   ./scripts/run-simulators.sh            # build + launch on both
 #   ./scripts/run-simulators.sh --reset    # uninstall first (fresh onboarding + new identity)
+#
+# Other simulators:
+#   IBANGA_SIMULATORS="iPhone 16,iPhone 16 Pro" ./scripts/run-simulators.sh
 
 set -euo pipefail
 
@@ -13,7 +17,7 @@ PROJECT="$ROOT/IbangaChat.xcodeproj"
 SCHEME="IbangaChat"
 DERIVED_DATA="$ROOT/build/DerivedData"
 APP_PATH="$DERIVED_DATA/Build/Products/Debug-iphonesimulator/IbangaChat.app"
-DEVICES=("iPhone 17" "iPhone 17 Pro")
+IFS=',' read -r -a DEVICES <<< "${IBANGA_SIMULATORS:-iPhone 17,iPhone 17 Pro}"
 
 RESET=false
 [[ "${1:-}" == "--reset" ]] && RESET=true
@@ -29,7 +33,7 @@ UDIDS=()
 for name in "${DEVICES[@]}"; do
     udid="$(udid_for "$name")"
     if [[ -z "$udid" ]]; then
-        echo "✗ No available simulator named '$name'. Create it in Xcode › Window › Devices and Simulators." >&2
+        echo "✗ No available simulator named '$name'. Run ./scripts/setup.sh to create it." >&2
         exit 1
     fi
     UDIDS+=("$udid")

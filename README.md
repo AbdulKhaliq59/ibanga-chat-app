@@ -5,10 +5,12 @@
 Ibanga is a security-focused iOS messaging prototype built with native Apple technologies. Two nearby iPhones discover each other, authenticate, and exchange end-to-end encrypted text, photos and files. There is no server, no account and there are no third-party dependencies.
 
 <p align="center">
-  <img src="docs/screenshots/onboarding-welcome.png" width="240" alt="Onboarding">
-  <img src="docs/screenshots/onboarding-identity-dark.png" width="240" alt="Secure identity, dark mode">
-  <img src="docs/screenshots/chat-secure.png" width="240" alt="Secure conversation">
+  <img src="docs/demo-video/demo.gif" width="620" alt="Two iPhones discovering each other, establishing a secure session, and exchanging encrypted messages and a photo">
 </p>
+
+<p align="center"><sub>Two simulators pairing, establishing a secure session, and exchanging encrypted messages and a photo.</sub></p>
+
+> **Run it on your Mac:** install Xcode 26.4 or later, then run `./scripts/setup.sh && ./scripts/run-simulators.sh`. See [Getting Started](#getting-started) for the full guide.
 
 ---
 
@@ -201,39 +203,109 @@ Opened files are decrypted to a temporary file with `completeFileProtection`. It
 - **No plaintext search index.** Search decrypts in memory and never writes an index to disk. Read state is a plain boolean that reveals nothing about content.
 - **Not in backups or iCloud.** The store is excluded from backups and CloudKit sync is disabled. It would be useless off-device anyway, because the keys are device-only.
 
-## Requirements
+## Getting Started
 
-- Xcode 26.4 or later
-- iOS 17.0+ (simulator or device)
-- Two devices or simulators on the same local network
+### Quick start
 
-## Setup
+On a Mac that already has Xcode 26.4 or later:
 
 ```bash
-git clone <repo-url>
+git clone <repo-url> IbangaChat
 cd IbangaChat
-open IbangaChat.xcodeproj
+./scripts/setup.sh              # one time: checks tools, creates simulators, test build
+./scripts/run-simulators.sh     # builds and launches the app on two simulators
 ```
 
-To run on a physical device, select your development team under *Signing & Capabilities*. No other configuration is required.
+### Required tools
 
-## Running the Application
+| Tool | Version | Notes |
+|---|---|---|
+| **Mac** | Apple silicon or Intel | About 30 GB of free disk space for Xcode and the iOS Simulator |
+| **macOS** | 15.6 (Sequoia) or later | Required by Xcode 26 |
+| **Xcode** | **26.4 or later** | Mac App Store or [developer.apple.com/xcode](https://developer.apple.com/xcode/). Includes Swift 6.2, the iOS 26 SDK and the command-line tools. |
+| **iOS Simulator runtime** | iOS 26.x | Installed with Xcode, or by `setup.sh` |
+| **Git** | Any | Included with Xcode |
 
-The quickest way to see two devices talking is the bundled script. It builds once and launches the app on **iPhone 17** and **iPhone 17 Pro** simulators side by side:
+**Not required:** Homebrew, CocoaPods, Swift packages, Node or Ruby. The project has no third-party dependencies. An Apple Developer account is only needed to run on a physical iPhone.
+
+### Step by step on a new Mac
+
+1. **Install Xcode 26.4 or later** from the Mac App Store.
+2. **Open Xcode once.** Accept the license and let it install its components. When asked which platforms to download, pick **iOS**.
+3. **Clone the repository:**
+   ```bash
+   git clone <repo-url> IbangaChat
+   cd IbangaChat
+   ```
+4. **Run the setup script:**
+   ```bash
+   ./scripts/setup.sh
+   ```
+   It asks before anything that needs `sudo` or a large download. Use `./scripts/setup.sh --yes` to accept every step automatically.
+5. **Launch the app on two simulators:**
+   ```bash
+   ./scripts/run-simulators.sh
+   ```
+
+### What `setup.sh` does
+
+| Step | Check | Fixes automatically (after asking) |
+|---|---|---|
+| 1 | macOS is 15.6 or later | — |
+| 2 | The full Xcode 26.4+ is installed and selected (not just the Command Line Tools) | — (prints the `xcode-select` command) |
+| 3 | The Xcode license is accepted | `sudo xcodebuild -license accept` |
+| 4 | Xcode's first-launch components are installed | `sudo xcodebuild -runFirstLaunch` |
+| 5 | An iOS Simulator runtime is installed | `xcodebuild -downloadPlatform iOS` |
+| 6 | The **iPhone 17** and **iPhone 17 Pro** simulators exist | `xcrun simctl create …` |
+| 7 | The project builds | — (prints the errors and the path to the log) |
+
+### Scripts
+
+| Script | Purpose |
+|---|---|
+| `./scripts/setup.sh [--yes]` | One-time environment check and preparation |
+| `./scripts/run-simulators.sh` | Build once and launch the app on both simulators side by side |
+| `./scripts/run-simulators.sh --reset` | Uninstall first: fresh onboarding and new identities on both devices |
+| `./scripts/generate-app-icon.sh` | Re-render the app icon from `IbangaLogoShape` |
+
+To use other simulators (for example on an older Xcode), set `IBANGA_SIMULATORS` for both scripts:
 
 ```bash
-./scripts/run-simulators.sh           # build and launch on both
-./scripts/run-simulators.sh --reset   # uninstall first: fresh onboarding and new identities
-./scripts/generate-app-icon.sh        # re-render the app icon from IbangaLogoShape
+IBANGA_SIMULATORS="iPhone 16,iPhone 16 Pro" ./scripts/setup.sh
+IBANGA_SIMULATORS="iPhone 16,iPhone 16 Pro" ./scripts/run-simulators.sh
 ```
 
-Then:
+### Trying it out
 
-1. Complete onboarding on both simulators (**Create Secure Identity**).
-2. On one simulator, tap **Connect Device** and choose the other.
-3. Exchange messages, photos and files.
-4. Tap the name in the chat header to compare verification codes and **Mark as Verified**.
-5. Open **Security** (shield icon) to see the on-device cryptographic self-check.
+1. Complete onboarding on both simulators (**Continue** → **Create Secure Identity**).
+2. On one simulator, tap **Connect Device** and choose the other device.
+3. Exchange messages. Tap **+** for **Photos** or **Document**.
+4. Tap the name in the chat header to compare verification codes, and **Mark as Verified**.
+5. Open **Settings** (gear icon) to change your name, switch between Light and Dark, or open **Security & Privacy** to see the on-device cryptographic self-check.
+
+### Running from Xcode
+
+Open `IbangaChat.xcodeproj`, choose the **IbangaChat** scheme and a simulator, then press **⌘R**. To see two devices talking, run it on one simulator, then choose a second simulator and press **⌘R** again.
+
+### Running on a physical iPhone
+
+1. Connect the iPhone and enable **Developer Mode** (Settings › Privacy & Security).
+2. In Xcode, select the **IbangaChat** target › *Signing & Capabilities*:
+   - choose your own **Team**;
+   - change the **Bundle Identifier** to something unique, e.g. `com.yourname.IbangaChat`.
+3. Build and run (**⌘R**). When the app first asks for **Local Network** access, choose **Allow**. Ibanga needs it to discover nearby devices.
+4. Both devices must be on the **same Wi‑Fi network** with Ibanga open.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `No available simulator named 'iPhone 17'` | Run `./scripts/setup.sh`, or choose other devices with `IBANGA_SIMULATORS`. |
+| `xcode-select` points to `CommandLineTools` | `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer` |
+| Devices don't appear in **Connect Device** | Keep Ibanga open and in the foreground on both devices, on the same network. On an iPhone, check Settings › Privacy & Security › Local Network › Ibanga. |
+| Old conversation stays "Not connected" after a reinstall | A reinstall creates a new identity, so the old conversation can't reconnect. Pair again from **Connect Device**, or run `./scripts/run-simulators.sh --reset` to start both devices fresh. |
+| Build output shows "device is locked" errors | A locked iPhone is plugged into the Mac. This is harmless; unlock it or disconnect it. |
+| Anything else in the build | See `build/xcodebuild.log` (run script) or `build/setup-build.log` (setup script). |
 
 ## Security Considerations
 
