@@ -6,6 +6,7 @@ import SwiftData
 final class ChatRepository: ChatRepositoryProtocol {
     private(set) var conversations: [Conversation] = []
     private var messagesByConversation: [Conversation.ID: [Message]] = [:]
+    private var transfers: [UUID: Double] = [:]
 
     @ObservationIgnored private let context: ModelContext
     @ObservationIgnored private let crypto: any CryptoServiceProtocol
@@ -108,70 +109,64 @@ final class ChatRepository: ChatRepositoryProtocol {
     // MARK: Messages
 
     func sendText(_ text: String, in conversationID: Conversation.ID) async throws(ChatError) {
-        guard let localPeerID,
-              let record = findConversationRecord(id: conversationID),
-              let peerRecord = record.peer
-        else { throw .conversationNotFound }
-
-        let messageID = UUID()
-        let sentAt = Date(timeIntervalSince1970: TimeInterval(Date.now.millisecondsSince1970) / 1000)
-        let content = MessageContent.text(text)
-        let sealed = try await sealForStorage(content, messageID: messageID)
-
-        let messageRecord = MessageRecord(
-            id: messageID,
-            direction: .outgoing,
-            kind: content.kind,
-            status: .sending,
-            sentAt: sentAt,
-            sealedBody: sealed,
-            conversation: record
-        )
-        context.insert(messageRecord)
-        record.lastActivityAt = sentAt
-        save()
-
-        insert(Message(
-            id: messageID,
-            conversationID: conversationID,
-            senderID: localPeerID,
-            recipientID: peerRecord.fingerprint,
-            direction: .outgoing,
-            content: content,
-            sentAt: sentAt,
-            status: .sending
-        ), into: record)
-
-        do {
-            try await sessions.send(.text(text), messageID: messageID, sentAt: sentAt, to: peerRecord.fingerprint)
-            updateStatus(of: messageID, to: .sent, onlyIfCurrently: .sending)
-        } catch {
-            updateStatus(of: messageID, to: .failed)
-            throw .sendFailed(error)
-        }
+        try await sendOutgoing(.text(text), attachmentData: nil, in: conversationID)
     }
 
-    func storeIncomingText(_ text: String, from envelope: IncomingEnvelope) async throws(ChatError) -> Bool {
+    func sendAttachment(_ draft: AttachmentDraft, in conversationID: Conversation.ID) async throws(ChatError) {
+        let attachment = Attachment(
+            id: UUID(),
+            kind: draft.kind,
+            filename: draft.filename,
+            contentType: draft.contentType,
+            byteCount: draft.data.count
+        )
+        try await sendOutgoing(.attachment(attachment), attachmentData: draft.data, in: conversationID)
+    }
+
+    func resend(messageID: UUID) async throws(ChatError) {
+        guard let record = findMessageRecord(id: messageID),
+              record.direction == .outgoing,
+              record.status == .failed,
+              let conversationRecord = record.conversation,
+              let peerID = conversationRecord.peer?.fingerprint,
+              let message = await decrypt(StoredMessage(record), in: conversationRecord)
+        else { throw .conversationNotFound }
+
+        var attachmentData: Data?
+        if let attachment = message.attachment {
+            guard let data = await self.attachmentData(for: attachment) else { throw .storageFailed }
+            attachmentData = data
+        }
+
+        updateStatus(of: messageID, to: .sending)
+        try await transmit(message.content, attachmentData: attachmentData, messageID: messageID, sentAt: message.sentAt, to: peerID)
+    }
+
+    func storeIncoming(_ content: MessageContent, attachmentData: Data?, from envelope: IncomingEnvelope) async throws(ChatError) -> Bool {
         guard let localPeerID,
               let peerRecord = findPeerRecord(id: envelope.peerID),
               let record = peerRecord.conversations.first
         else { throw .conversationNotFound }
         guard findMessageRecord(id: envelope.messageID) == nil else { return false }
 
-        let content = MessageContent.text(text)
         let sentAt = min(envelope.sentAt, .now)
-        let sealed = try await sealForStorage(content, messageID: envelope.messageID)
+        let sealedBody = try await sealForStorage(content, messageID: envelope.messageID)
+        let sealedAttachment = try await sealAttachment(of: content, data: attachmentData)
         guard findMessageRecord(id: envelope.messageID) == nil else { return false }
 
-        context.insert(MessageRecord(
+        let messageRecord = MessageRecord(
             id: envelope.messageID,
             direction: .incoming,
             kind: content.kind,
             status: .received,
             sentAt: sentAt,
-            sealedBody: sealed,
+            sealedBody: sealedBody,
             conversation: record
-        ))
+        )
+        context.insert(messageRecord)
+        if let sealedAttachment {
+            context.insert(AttachmentRecord(id: sealedAttachment.id, kind: content.kind, sealedContent: sealedAttachment.payload, message: messageRecord))
+        }
         record.lastActivityAt = max(record.lastActivityAt, sentAt)
         save()
 
@@ -186,6 +181,24 @@ final class ChatRepository: ChatRepositoryProtocol {
             status: .received
         ), into: record)
         return true
+    }
+
+    func attachmentData(for attachment: Attachment) async -> Data? {
+        var descriptor = FetchDescriptor<AttachmentRecord>(predicate: #Predicate { $0.id == attachment.id })
+        descriptor.fetchLimit = 1
+        guard let record = try? context.fetch(descriptor).first else { return nil }
+
+        do {
+            let payload = try SealedPayload(combined: record.sealedContent)
+            return try await crypto.openFromStorage(payload, associatedData: Self.storageAssociatedData(forAttachment: attachment.id))
+        } catch {
+            logger.log(.failure(.persistence, code: "attachment-unreadable"))
+            return nil
+        }
+    }
+
+    func transferProgress(for messageID: UUID) -> Double? {
+        transfers[messageID]
     }
 
     func markDelivered(messageID: UUID, by peerID: Peer.ID) {
@@ -255,6 +268,92 @@ final class ChatRepository: ChatRepositoryProtocol {
         }
     }
 
+    private func sendOutgoing(_ content: MessageContent, attachmentData: Data?, in conversationID: Conversation.ID) async throws(ChatError) {
+        guard let localPeerID,
+              let record = findConversationRecord(id: conversationID),
+              let peerRecord = record.peer
+        else { throw .conversationNotFound }
+
+        let messageID = UUID()
+        let sentAt = Date(timeIntervalSince1970: TimeInterval(Date.now.millisecondsSince1970) / 1000)
+        let sealedBody = try await sealForStorage(content, messageID: messageID)
+        let sealedAttachment = try await sealAttachment(of: content, data: attachmentData)
+
+        let messageRecord = MessageRecord(
+            id: messageID,
+            direction: .outgoing,
+            kind: content.kind,
+            status: .sending,
+            sentAt: sentAt,
+            sealedBody: sealedBody,
+            conversation: record
+        )
+        context.insert(messageRecord)
+        if let sealedAttachment {
+            context.insert(AttachmentRecord(id: sealedAttachment.id, kind: content.kind, sealedContent: sealedAttachment.payload, message: messageRecord))
+        }
+        record.lastActivityAt = sentAt
+        save()
+
+        insert(Message(
+            id: messageID,
+            conversationID: conversationID,
+            senderID: localPeerID,
+            recipientID: peerRecord.fingerprint,
+            direction: .outgoing,
+            content: content,
+            sentAt: sentAt,
+            status: .sending
+        ), into: record)
+
+        try await transmit(content, attachmentData: attachmentData, messageID: messageID, sentAt: sentAt, to: peerRecord.fingerprint)
+    }
+
+    private func transmit(
+        _ content: MessageContent,
+        attachmentData: Data?,
+        messageID: UUID,
+        sentAt: Date,
+        to peerID: Peer.ID
+    ) async throws(ChatError) {
+        let payload: SessionPayload
+        switch content {
+        case .text(let text):
+            payload = .text(text)
+        case .attachment(let attachment):
+            guard let attachmentData else {
+                updateStatus(of: messageID, to: .failed)
+                throw .storageFailed
+            }
+            payload = .attachment(attachment, data: attachmentData)
+            transfers[messageID] = 0
+        }
+        defer { transfers[messageID] = nil }
+
+        do {
+            try await sessions.send(payload, messageID: messageID, sentAt: sentAt, to: peerID) { [weak self] fraction in
+                if self?.transfers[messageID] != nil {
+                    self?.transfers[messageID] = fraction
+                }
+            }
+            updateStatus(of: messageID, to: .sent, onlyIfCurrently: .sending)
+        } catch {
+            updateStatus(of: messageID, to: .failed)
+            throw .sendFailed(error)
+        }
+    }
+
+    private func sealAttachment(of content: MessageContent, data: Data?) async throws(ChatError) -> (id: UUID, payload: SealedPayload)? {
+        guard case .attachment(let attachment) = content, let data else { return nil }
+        do {
+            let sealed = try await crypto.sealForStorage(data, associatedData: Self.storageAssociatedData(forAttachment: attachment.id))
+            return (attachment.id, sealed)
+        } catch {
+            logger.log(.failure(.persistence, code: "attachment-seal-failed"))
+            throw .storageFailed
+        }
+    }
+
     private func sealForStorage(_ content: MessageContent, messageID: UUID) async throws(ChatError) -> SealedPayload {
         do {
             let plaintext = try Self.encoder.encode(content)
@@ -317,6 +416,12 @@ final class ChatRepository: ChatRepositoryProtocol {
 
     private static func peer(from record: PeerRecord) -> Peer {
         Peer(id: record.fingerprint, displayName: record.displayName, identityKey: record.publicKey, isVerified: record.isVerified)
+    }
+
+    private static func storageAssociatedData(forAttachment attachmentID: UUID) -> Data {
+        var data = Data("IbangaChat/v1/storage/attachment".utf8)
+        withUnsafeBytes(of: attachmentID.uuid) { data.append(contentsOf: $0) }
+        return data
     }
 
     private static func storageAssociatedData(for messageID: UUID) -> Data {

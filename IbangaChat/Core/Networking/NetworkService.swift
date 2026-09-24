@@ -18,14 +18,11 @@ nonisolated protocol NetworkServiceProtocol: Sendable {
     var events: AsyncStream<NetworkEvent> { get }
 
     func start(advertisingAs name: String, fingerprint: String) async
-    func stop() async
     func connect(to serviceID: String, id: ConnectionID) async throws(NetworkError)
     func send(_ packet: NetworkPacket, on id: ConnectionID) async throws(NetworkError)
     func disconnect(_ id: ConnectionID) async
 }
 
-/// Local-network discovery (Bonjour) and TCP transport built on Network.framework.
-/// Responsible only for moving opaque packets; it never decrypts or interprets them.
 actor NetworkService: NetworkServiceProtocol {
     static let serviceType = "_ibanga._tcp"
     private static let fingerprintKey = "fp"
@@ -51,14 +48,6 @@ actor NetworkService: NetworkServiceProtocol {
         advertisement = (name, fingerprint)
         startListener()
         startBrowser()
-    }
-
-    func stop() {
-        listener?.cancel()
-        browser?.cancel()
-        listener = nil
-        browser = nil
-        connections.values.forEach { $0.cancel() }
     }
 
     func connect(to serviceID: String, id: ConnectionID) throws(NetworkError) {

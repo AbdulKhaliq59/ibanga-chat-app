@@ -1,7 +1,6 @@
 enum IbangaIcons {
     static let shield = "lock.shield"
     static let shieldFilled = "lock.shield.fill"
-    static let key = "key.horizontal"
     static let keyFilled = "key.horizontal.fill"
     static let lock = "lock"
     static let lockFilled = "lock.fill"
@@ -16,6 +15,5 @@ enum IbangaIcons {
     static let send = "arrow.up"
     static let verified = "checkmark.seal.fill"
     static let notConnected = "lock.slash"
-    static let nearby = "dot.radiowaves.left.and.right"
     static let copy = "doc.on.doc"
 }

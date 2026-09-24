@@ -179,7 +179,7 @@ private struct ConversationRow: View {
         guard let message = conversation.lastMessage else {
             return String(localized: "Secure conversation started")
         }
-        return message.direction == .outgoing ? String(localized: "You: \(message.text)") : message.text
+        return message.direction == .outgoing ? String(localized: "You: \(message.previewText)") : message.previewText
     }
 
     private static func timestamp(for date: Date) -> String {

@@ -1,11 +1,11 @@
 import Foundation
 import SwiftData
 
+/// Attachment bytes, sealed with the device storage key. Metadata lives in the owning message's sealed body.
 @Model
 final class AttachmentRecord {
     @Attribute(.unique) var id: UUID
     var kindRawValue: String
-    var sealedMetadata: Data
     @Attribute(.externalStorage) var sealedContent: Data
     var message: MessageRecord?
 
@@ -14,16 +14,9 @@ final class AttachmentRecord {
         set { kindRawValue = newValue.rawValue }
     }
 
-    init(
-        id: UUID = UUID(),
-        kind: MessageKind,
-        sealedMetadata: SealedPayload,
-        sealedContent: SealedPayload,
-        message: MessageRecord
-    ) {
+    init(id: UUID, kind: MessageKind, sealedContent: SealedPayload, message: MessageRecord) {
         self.id = id
         self.kindRawValue = kind.rawValue
-        self.sealedMetadata = sealedMetadata.combined
         self.sealedContent = sealedContent.combined
         self.message = message
     }

@@ -10,6 +10,7 @@ final class SessionRepository: SessionRepositoryProtocol {
     private(set) var localDisplayName: String
     private(set) var nearbyDevices: [NearbyDevice] = []
     private var peerStates: [Peer.ID: SecureConnectionState] = [:]
+    private var incomingTransfers: [Peer.ID: Double] = [:]
 
     let events: AsyncStream<SessionEvent>
 
@@ -23,6 +24,8 @@ final class SessionRepository: SessionRepositoryProtocol {
     @ObservationIgnored private var securePeers: [Peer.ID: ConnectionID] = [:]
     @ObservationIgnored private var pendingConnects: [ConnectionID: CheckedContinuation<Result<PeerHandshake, SessionError>, Never>] = [:]
     @ObservationIgnored private var networkTask: Task<Void, Never>?
+    @ObservationIgnored private var knownPeers: Set<Peer.ID> = []
+    @ObservationIgnored private var autoConnecting: Set<Peer.ID> = []
 
     init(
         network: any NetworkServiceProtocol,
@@ -47,6 +50,10 @@ final class SessionRepository: SessionRepositoryProtocol {
         peerStates[peerID] ?? .inactive
     }
 
+    func incomingTransferProgress(from peerID: Peer.ID) -> Double? {
+        incomingTransfers[peerID]
+    }
+
     // MARK: Lifecycle
 
     func start(localIdentity identity: DeviceIdentity) async {
@@ -59,6 +66,11 @@ final class SessionRepository: SessionRepositoryProtocol {
             }
         }
         await network.start(advertisingAs: localDisplayName, fingerprint: identity.fingerprint)
+    }
+
+    func rememberPeers(_ peerIDs: [Peer.ID]) {
+        knownPeers.formUnion(peerIDs)
+        reconnectKnownPeers()
     }
 
     func updateLocalDisplayName(_ name: String) async {
@@ -108,15 +120,21 @@ final class SessionRepository: SessionRepositoryProtocol {
 
     // MARK: Sending
 
-    func send(_ payload: SessionPayload, messageID: UUID, sentAt: Date, to peerID: Peer.ID) async throws(SessionError) {
+    func send(
+        _ payload: SessionPayload,
+        messageID: UUID,
+        sentAt: Date,
+        to peerID: Peer.ID,
+        progress: ((Double) -> Void)?
+    ) async throws(SessionError) {
         guard let id = securePeers[peerID], let channel = channels[id] else { throw .notConnected }
 
-        // Serialise per channel so sequence numbers reach the peer in order.
+        // Serialise per channel so fragments and sequence numbers reach the peer in order.
         let previous = channel.sendTail
         let operation = Task { () -> SessionError? in
             await previous?.value
             do throws(SessionError) {
-                try await transmitMessage(payload, messageID: messageID, sentAt: sentAt, on: channel)
+                try await transmitMessage(payload, messageID: messageID, sentAt: sentAt, on: channel, progress: progress)
                 return nil
             } catch {
                 return error
@@ -137,6 +155,7 @@ final class SessionRepository: SessionRepositoryProtocol {
         switch event {
         case .servicesChanged(let services):
             nearbyDevices = services.map { NearbyDevice(id: $0.id, name: $0.name, claimedPeerID: $0.fingerprint) }
+            reconnectKnownPeers()
         case let .connectionReady(id, direction):
             await beginHandshake(on: id, direction: direction)
         case let .packetReceived(id, packet):
@@ -271,7 +290,18 @@ final class SessionRepository: SessionRepositoryProtocol {
         }
         channel.lastReceivedSequence = envelope.sequence
 
-        guard let content = try? WireProtocol.decode(SessionPayload.self, from: plaintext) else {
+        guard let fragment = try? WireProtocol.decode(PayloadFragment.self, from: plaintext) else {
+            return fail(channel, .protocolViolation)
+        }
+        let assembled: Data?
+        do throws(SessionError) {
+            assembled = try reassemble(fragment, of: envelope, on: channel, from: peer.peerID)
+        } catch {
+            return fail(channel, error)
+        }
+        guard let assembled else { return }
+
+        guard let content = try? WireProtocol.decode(SessionPayload.self, from: assembled) else {
             return fail(channel, .protocolViolation)
         }
 
@@ -284,28 +314,102 @@ final class SessionRepository: SessionRepositoryProtocol {
         )))
     }
 
-    private func transmitMessage(_ payload: SessionPayload, messageID: UUID, sentAt: Date, on channel: Channel) async throws(SessionError) {
+    /// Assembles fragments in order. Returns the full payload once the last fragment arrives.
+    /// Fragments of different messages never interleave because sending is serialised per channel.
+    private func reassemble(
+        _ fragment: PayloadFragment,
+        of envelope: EncryptedMessage,
+        on channel: Channel,
+        from peerID: Peer.ID
+    ) throws(SessionError) -> Data? {
+        guard fragment.count >= 1,
+              fragment.count <= WireProtocol.maximumFragmentCount,
+              fragment.index < fragment.count,
+              fragment.totalByteCount <= WireProtocol.maximumPayloadByteCount
+        else { throw .protocolViolation }
+
+        var transfer: InboundTransfer
+        if fragment.index == 0 {
+            guard channel.inbound == nil else { throw .protocolViolation }
+            transfer = InboundTransfer(messageID: envelope.id, count: fragment.count, totalByteCount: fragment.totalByteCount)
+        } else {
+            guard let existing = channel.inbound,
+                  existing.messageID == envelope.id,
+                  existing.nextIndex == fragment.index,
+                  existing.count == fragment.count,
+                  existing.totalByteCount == fragment.totalByteCount
+            else { throw .protocolViolation }
+            transfer = existing
+        }
+
+        transfer.data.append(fragment.bytes)
+        transfer.nextIndex += 1
+        guard transfer.data.count <= transfer.totalByteCount else { throw .protocolViolation }
+
+        guard transfer.nextIndex == transfer.count else {
+            channel.inbound = transfer
+            incomingTransfers[peerID] = Double(transfer.nextIndex) / Double(transfer.count)
+            return nil
+        }
+
+        channel.inbound = nil
+        incomingTransfers[peerID] = nil
+        guard transfer.data.count == transfer.totalByteCount else { throw .protocolViolation }
+        return transfer.data
+    }
+
+    private func transmitMessage(
+        _ payload: SessionPayload,
+        messageID: UUID,
+        sentAt: Date,
+        on channel: Channel,
+        progress: ((Double) -> Void)?
+    ) async throws(SessionError) {
         guard channel.isAuthenticated, channel.failure == nil, let session = channel.session else {
             throw .notConnected
         }
 
-        let sequence = channel.nextSendSequence
-        channel.nextSendSequence += 1
-        let milliseconds = sentAt.millisecondsSince1970
-        let associatedData = EncryptedMessage.associatedData(id: messageID, sequence: sequence, sentAtMilliseconds: milliseconds)
-
-        let sealed: SealedPayload
+        let encoded: Data
         do {
-            sealed = try await crypto.seal(WireProtocol.encode(payload), in: session, associatedData: associatedData)
+            encoded = try WireProtocol.encode(payload)
         } catch {
             throw .encryptionFailed
         }
+        guard encoded.count <= WireProtocol.maximumPayloadByteCount else { throw .transmissionFailed }
 
-        let envelope = EncryptedMessage(id: messageID, sequence: sequence, sentAtMilliseconds: milliseconds, payload: sealed)
-        do {
-            try await transmit(.message, WireProtocol.encode(envelope), on: channel)
-        } catch {
-            throw .transmissionFailed
+        let milliseconds = sentAt.millisecondsSince1970
+        let fragmentCount = max(1, (encoded.count + WireProtocol.fragmentByteCount - 1) / WireProtocol.fragmentByteCount)
+
+        for index in 0..<fragmentCount {
+            guard channel.failure == nil else { throw .notConnected }
+
+            let start = encoded.startIndex + index * WireProtocol.fragmentByteCount
+            let end = min(start + WireProtocol.fragmentByteCount, encoded.endIndex)
+            let fragment = PayloadFragment(
+                index: index,
+                count: fragmentCount,
+                totalByteCount: encoded.count,
+                bytes: encoded.subdata(in: start..<end)
+            )
+
+            let sequence = channel.nextSendSequence
+            channel.nextSendSequence += 1
+            let associatedData = EncryptedMessage.associatedData(id: messageID, sequence: sequence, sentAtMilliseconds: milliseconds)
+
+            let sealed: SealedPayload
+            do {
+                sealed = try await crypto.seal(WireProtocol.encode(fragment), in: session, associatedData: associatedData)
+            } catch {
+                throw .encryptionFailed
+            }
+
+            let envelope = EncryptedMessage(id: messageID, sequence: sequence, sentAtMilliseconds: milliseconds, payload: sealed)
+            do {
+                try await transmit(.message, WireProtocol.encode(envelope), on: channel)
+            } catch {
+                throw .transmissionFailed
+            }
+            progress?(Double(index + 1) / Double(fragmentCount))
         }
         logger.log(.encryptedMessageSent)
     }
@@ -329,6 +433,7 @@ final class SessionRepository: SessionRepositoryProtocol {
 
         securePeers[peer.peerID] = channel.id
         peerStates[peer.peerID] = .secure
+        knownPeers.insert(peer.peerID)
         logger.log(.peerConnected)
         eventContinuation.yield(.established(peer))
         resumeConnect(channel.id, with: .success(peer))
@@ -364,12 +469,37 @@ final class SessionRepository: SessionRepositoryProtocol {
         resumeConnect(id, with: .failure(channel.failure ?? .connectionFailed))
 
         guard let peerID = channel.peer?.peerID ?? channel.expectedPeerID else { return }
+        if channel.inbound != nil {
+            incomingTransfers[peerID] = nil
+        }
         if securePeers[peerID] == id {
             securePeers[peerID] = nil
             peerStates[peerID] = nil
             logger.log(.peerDisconnected)
         } else if securePeers[peerID] == nil, channel.failure == nil {
             peerStates[peerID] = nil
+        }
+    }
+
+    /// Re-establishes sessions with previously connected peers as soon as they are nearby.
+    /// Only the peer with the lower fingerprint dials, so the two devices never race each other.
+    /// A failed session is not retried automatically; the user decides.
+    private func reconnectKnownPeers() {
+        guard let localPeerID = localIdentity?.fingerprint else { return }
+
+        for device in nearbyDevices {
+            guard let peerID = device.claimedPeerID,
+                  knownPeers.contains(peerID),
+                  localPeerID < peerID,
+                  connectionState(for: peerID) == .inactive,
+                  !autoConnecting.contains(peerID)
+            else { continue }
+
+            autoConnecting.insert(peerID)
+            Task {
+                _ = try? await connect(to: device)
+                autoConnecting.remove(peerID)
+            }
         }
     }
 
@@ -416,10 +546,19 @@ private final class Channel {
     var nextSendSequence: UInt64 = 1
     var lastReceivedSequence: UInt64 = 0
     var sendTail: Task<Void, Never>?
+    var inbound: InboundTransfer?
 
     init(id: ConnectionID, direction: ConnectionDirection, expectedPeerID: Peer.ID?) {
         self.id = id
         self.direction = direction
         self.expectedPeerID = expectedPeerID
     }
+}
+
+private struct InboundTransfer {
+    let messageID: UUID
+    let count: Int
+    let totalByteCount: Int
+    var nextIndex = 0
+    var data = Data()
 }

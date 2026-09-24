@@ -6,6 +6,4 @@ nonisolated enum SecureConnectionState: Equatable, Sendable {
     case establishingSession
     case secure
     case failed
-
-    var permitsTransmission: Bool { self == .secure }
 }

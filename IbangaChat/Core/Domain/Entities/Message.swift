@@ -2,10 +2,12 @@ import Foundation
 
 nonisolated enum MessageContent: Codable, Hashable, Sendable {
     case text(String)
+    case attachment(Attachment)
 
     var kind: MessageKind {
         switch self {
         case .text: .text
+        case .attachment(let attachment): attachment.kind
         }
     }
 }
@@ -22,9 +24,20 @@ nonisolated struct Message: Identifiable, Hashable, Sendable {
 
     var kind: MessageKind { content.kind }
 
-    var text: String {
+    var text: String? {
+        if case .text(let text) = content { return text }
+        return nil
+    }
+
+    var attachment: Attachment? {
+        if case .attachment(let attachment) = content { return attachment }
+        return nil
+    }
+
+    var previewText: String {
         switch content {
         case .text(let text): text
+        case .attachment(let attachment): attachment.kind == .image ? String(localized: "📷 Photo") : "📎 \(attachment.filename)"
         }
     }
 }
@@ -32,6 +45,7 @@ nonisolated struct Message: Identifiable, Hashable, Sendable {
 /// What travels inside an encrypted session. Never transmitted outside `EncryptedMessage`.
 nonisolated enum SessionPayload: Codable, Hashable, Sendable {
     case text(String)
+    case attachment(Attachment, data: Data)
     case receipt(messageID: UUID)
 }
 

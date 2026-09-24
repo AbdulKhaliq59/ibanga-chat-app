@@ -2,7 +2,7 @@ import OSLog
 
 nonisolated struct SecureLogger: Sendable {
     enum Category: String, Sendable {
-        case app, crypto, keychain, network, session, persistence, security
+        case crypto, keychain, network, session, persistence, security
     }
 
     enum Event: Sendable {

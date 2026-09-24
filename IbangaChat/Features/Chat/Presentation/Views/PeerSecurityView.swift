@@ -15,6 +15,13 @@ struct PeerSecurityView: View {
                     header
                     verificationSection
                     protectionSection
+                    if viewModel.connectionState == .secure {
+                        Button("Disconnect", role: .destructive) {
+                            Task { await viewModel.disconnect() }
+                        }
+                        .font(IbangaTypography.callout)
+                        .frame(maxWidth: .infinity)
+                    }
                 }
                 .padding(.horizontal, IbangaSpacing.screenMargin)
                 .padding(.bottom, IbangaSpacing.xxl)

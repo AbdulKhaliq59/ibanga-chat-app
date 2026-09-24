@@ -19,8 +19,9 @@ struct PeerAvatar: View {
     private var initials: String {
         let letters = name
             .split(whereSeparator: { $0.isWhitespace })
-            .prefix(2)
             .compactMap(\.first)
+            .filter(\.isLetter)
+            .prefix(2)
         return letters.isEmpty ? "?" : String(letters).uppercased()
     }
 }

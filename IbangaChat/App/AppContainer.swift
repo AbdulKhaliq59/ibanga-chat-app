@@ -9,6 +9,7 @@ final class AppContainer {
     private let sessionRepository: any SessionRepositoryProtocol
     private let chatRepository: any ChatRepositoryProtocol
     private let securityService: any SecurityServiceProtocol
+    private let attachments: any AttachmentProcessing = AttachmentProcessor()
     private var messagePump: Task<Void, Never>?
 
     init(
@@ -59,7 +60,8 @@ final class AppContainer {
 
         let chat = chatRepository
         let sessions = sessionRepository
-        let receiveMessage = ReceiveMessageUseCase(chat: chat, sessions: sessions)
+        let receiveMessage = ReceiveMessageUseCase(chat: chat, sessions: sessions, attachments: attachments)
+        attachments.removePreviewFiles()
         messagePump = Task {
             for await event in sessions.events {
                 switch event {
@@ -72,6 +74,7 @@ final class AppContainer {
         }
 
         await chat.start(localIdentity: identity)
+        sessions.rememberPeers(chat.conversations.map(\.peer.id))
         await sessions.start(localIdentity: identity)
     }
 
@@ -101,8 +104,13 @@ final class AppContainer {
             conversationID: conversationID,
             chat: chatRepository,
             sessions: sessionRepository,
-            sendMessage: SendMessageUseCase(chat: chatRepository, sessions: sessionRepository),
-            reconnectToPeer: ReconnectToPeerUseCase(chat: chatRepository, sessions: sessionRepository),
+            attachments: attachments,
+            actions: ChatViewModel.Actions(
+                sendMessage: SendMessageUseCase(chat: chatRepository, sessions: sessionRepository),
+                sendAttachment: SendAttachmentUseCase(chat: chatRepository, sessions: sessionRepository),
+                resendMessage: ResendMessageUseCase(chat: chatRepository, sessions: sessionRepository),
+                reconnectToPeer: ReconnectToPeerUseCase(chat: chatRepository, sessions: sessionRepository)
+            ),
             makePeerSecurity: { [unowned self] peerID in
                 PeerSecurityViewModel(peerID: peerID, chat: chatRepository, sessions: sessionRepository)
             }

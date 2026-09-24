@@ -28,6 +28,10 @@ final class PeerSecurityViewModel {
         verificationCode = await sessions.verificationCode(for: peer)
     }
 
+    func disconnect() async {
+        await sessions.disconnect(from: peerID)
+    }
+
     func setVerified(_ isVerified: Bool) {
         chat.setVerified(isVerified, peerID: peerID)
     }

@@ -18,12 +18,20 @@ final class PreviewSessionRepository: SessionRepositoryProtocol {
     let events = AsyncStream<SessionEvent> { $0.finish() }
 
     func start(localIdentity: DeviceIdentity) async {}
+    func rememberPeers(_ peerIDs: [Peer.ID]) {}
     func updateLocalDisplayName(_ name: String) async {}
     func connectionState(for peerID: Peer.ID) -> SecureConnectionState { .secure }
+    func incomingTransferProgress(from peerID: Peer.ID) -> Double? { nil }
     func connect(to device: NearbyDevice) async throws(SessionError) -> PeerHandshake { throw .peerUnavailable }
     func reconnect(to peerID: Peer.ID) async throws(SessionError) -> PeerHandshake { throw .peerUnavailable }
     func disconnect(from peerID: Peer.ID) async {}
-    func send(_ payload: SessionPayload, messageID: UUID, sentAt: Date, to peerID: Peer.ID) async throws(SessionError) {}
+    func send(
+        _ payload: SessionPayload,
+        messageID: UUID,
+        sentAt: Date,
+        to peerID: Peer.ID,
+        progress: ((Double) -> Void)?
+    ) async throws(SessionError) {}
     func verificationCode(for peer: Peer) async -> String? { "481 927 315 062" }
 }
 #endif
