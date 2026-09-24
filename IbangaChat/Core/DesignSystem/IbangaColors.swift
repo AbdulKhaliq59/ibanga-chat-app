@@ -20,15 +20,15 @@ enum IbangaColors {
     static let danger = Color(light: 0xB3261E, dark: 0xF2766B)
 }
 
-extension Color {
+nonisolated extension Color {
     init(light: UInt32, dark: UInt32) {
-        self.init(uiColor: UIColor { traits in
+        self.init(uiColor: UIColor { @Sendable traits in
             UIColor(rgb: traits.userInterfaceStyle == .dark ? dark : light)
         })
     }
 }
 
-private extension UIColor {
+nonisolated private extension UIColor {
     convenience init(rgb: UInt32) {
         self.init(
             red: CGFloat((rgb >> 16) & 0xFF) / 255,

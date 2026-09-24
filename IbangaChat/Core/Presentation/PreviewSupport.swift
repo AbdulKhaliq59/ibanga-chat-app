@@ -10,4 +10,20 @@ nonisolated struct PreviewIdentityRepository: IdentityRepositoryProtocol {
     func currentIdentity() async throws -> DeviceIdentity? { Self.identity }
     func createIdentity() async throws -> DeviceIdentity { Self.identity }
 }
+
+final class PreviewSessionRepository: SessionRepositoryProtocol {
+    let localDisplayName = "iPhone"
+    let nearbyDevices: [NearbyDevice] = []
+    let secureConnectionCount = 1
+    let events = AsyncStream<SessionEvent> { $0.finish() }
+
+    func start(localIdentity: DeviceIdentity) async {}
+    func updateLocalDisplayName(_ name: String) async {}
+    func connectionState(for peerID: Peer.ID) -> SecureConnectionState { .secure }
+    func connect(to device: NearbyDevice) async throws(SessionError) -> PeerHandshake { throw .peerUnavailable }
+    func reconnect(to peerID: Peer.ID) async throws(SessionError) -> PeerHandshake { throw .peerUnavailable }
+    func disconnect(from peerID: Peer.ID) async {}
+    func send(_ payload: SessionPayload, messageID: UUID, sentAt: Date, to peerID: Peer.ID) async throws(SessionError) {}
+    func verificationCode(for peer: Peer) async -> String? { "481 927 315 062" }
+}
 #endif

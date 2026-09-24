@@ -2,7 +2,7 @@ import OSLog
 
 nonisolated struct SecureLogger: Sendable {
     enum Category: String, Sendable {
-        case app, crypto, keychain, persistence, security
+        case app, crypto, keychain, network, session, persistence, security
     }
 
     enum Event: Sendable {
@@ -12,6 +12,11 @@ nonisolated struct SecureLogger: Sendable {
         case staleIdentityPurged
         case sessionEstablished
         case persistenceReady
+        case networkReady
+        case peerConnected
+        case peerDisconnected
+        case encryptedMessageSent
+        case encryptedMessageReceived
         case securityCheckCompleted(passed: Int, total: Int)
         /// `code` must be a stable, non-sensitive identifier such as `CryptoError.logCode`.
         case failure(Category, code: String)
@@ -37,6 +42,16 @@ nonisolated struct SecureLogger: Sendable {
             logger(.crypto).info("Secure session established")
         case .persistenceReady:
             logger(.persistence).debug("Persistent store ready")
+        case .networkReady:
+            logger(.network).info("Listening for nearby devices")
+        case .peerConnected:
+            logger(.network).info("Peer connected")
+        case .peerDisconnected:
+            logger(.network).info("Peer disconnected")
+        case .encryptedMessageSent:
+            logger(.session).debug("Encrypted message sent")
+        case .encryptedMessageReceived:
+            logger(.session).debug("Encrypted message received and authenticated")
         case let .securityCheckCompleted(passed, total):
             logger(.security).info("Security check completed: \(passed, privacy: .public)/\(total, privacy: .public) passed")
         case let .failure(category, code):

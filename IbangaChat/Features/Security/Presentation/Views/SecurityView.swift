@@ -91,8 +91,8 @@ struct SecurityView: View {
         IbangaSection("Connection", footer: "A secure session is established automatically when you connect to another device.") {
             DetailRow(label: "Status") {
                 HStack(spacing: IbangaSpacing.s) {
-                    StatusDot(color: viewModel.connectionState == .secure ? IbangaColors.secure : IbangaColors.neutral)
-                    Text(viewModel.connectionState.title)
+                    StatusDot(color: viewModel.hasSecureConnection ? IbangaColors.secure : IbangaColors.neutral)
+                    Text(viewModel.connectionSummary)
                 }
             }
         }
@@ -222,7 +222,7 @@ private struct CheckRow: View {
     NavigationStack {
         SecurityView(viewModel: SecurityViewModel(
             identity: PreviewIdentityRepository.identity,
-            connectionState: .inactive,
+            sessions: PreviewSessionRepository(),
             runSecurityCheck: RunSecurityCheckUseCase(service: PreviewSecurityService())
         ))
     }

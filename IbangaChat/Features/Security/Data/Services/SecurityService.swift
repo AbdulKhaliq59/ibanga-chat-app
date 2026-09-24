@@ -29,10 +29,11 @@ nonisolated struct SecurityService: SecurityServiceProtocol {
             let passed = switch kind {
             case .identityKeyStorage: identityStored
             case .x25519KnownAnswer: verifyX25519KnownAnswer()
-            case .x25519Agreement: verifyX25519Agreement()
+            case .sessionAgreement: verifySessionAgreement()
             case .invalidPeerKeyRejection: verifyInvalidPeerKeyRejection()
             case .hkdfKnownAnswer: verifyHKDFKnownAnswer()
             case .sessionKeySeparation: verifySessionKeySeparation()
+            case .impostorRejection: verifyImpostorRejection()
             case .aesGCMRoundTrip: verifyAESGCMRoundTrip()
             case .tamperRejection: verifyTamperRejection()
             case .associatedDataBinding: verifyAssociatedDataBinding()
@@ -68,28 +69,43 @@ nonisolated struct SecurityService: SecurityServiceProtocol {
         return bytes(of: aliceSecret) == expected && bytes(of: bobSecret) == expected
     }
 
-    private func verifyX25519Agreement() -> Bool {
-        let alice = Curve25519.KeyAgreement.PrivateKey()
-        let bob = Curve25519.KeyAgreement.PrivateKey()
-        guard let aliceKey = try? keyAgreement.deriveSessionKey(privateKey: alice, peerPublicKey: bob.publicKey),
-              let bobKey = try? keyAgreement.deriveSessionKey(privateKey: bob, peerPublicKey: alice.publicKey)
+    private func verifySessionAgreement() -> Bool {
+        let alice = Party(), bob = Party()
+        guard let aliceKeys = try? alice.derive(with: bob),
+              let bobKeys = try? bob.derive(with: alice)
         else { return false }
 
-        return aliceKey.bitCount == 256 && bytes(of: aliceKey) == bytes(of: bobKey)
+        return bytes(of: aliceKeys.sendingKey) == bytes(of: bobKeys.receivingKey)
+            && bytes(of: aliceKeys.receivingKey) == bytes(of: bobKeys.sendingKey)
+            && keyAgreement.isValidConfirmationTag(
+                keyAgreement.confirmationTag(for: bobKeys.localRole, in: bobKeys),
+                for: aliceKeys.localRole.peer,
+                in: aliceKeys
+            )
     }
 
     private func verifyInvalidPeerKeyRejection() -> Bool {
-        let local = Curve25519.KeyAgreement.PrivateKey()
+        let local = Party()
+        let remote = Party()
         guard let lowOrderPoint = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: Data(count: 32)) else {
             return true
         }
 
-        let rejectsLowOrder = (try? keyAgreement.deriveSessionKey(privateKey: local, peerPublicKey: lowOrderPoint)) == nil
-        let rejectsOwnKey = (try? keyAgreement.deriveSessionKey(privateKey: local, peerPublicKey: local.publicKey)) == nil
-        return rejectsLowOrder && rejectsOwnKey
+        let rejectsLowOrderIdentity = (try? keyAgreement.deriveSessionKeys(
+            localIdentity: local.identity, localEphemeral: local.ephemeral,
+            remoteIdentity: lowOrderPoint, remoteEphemeral: remote.ephemeral.publicKey
+        )) == nil
+        let rejectsLowOrderEphemeral = (try? keyAgreement.deriveSessionKeys(
+            localIdentity: local.identity, localEphemeral: local.ephemeral,
+            remoteIdentity: remote.identity.publicKey, remoteEphemeral: lowOrderPoint
+        )) == nil
+        let rejectsOwnIdentity = (try? keyAgreement.deriveSessionKeys(
+            localIdentity: local.identity, localEphemeral: local.ephemeral,
+            remoteIdentity: local.identity.publicKey, remoteEphemeral: remote.ephemeral.publicKey
+        )) == nil
+        return rejectsLowOrderIdentity && rejectsLowOrderEphemeral && rejectsOwnIdentity
     }
 
-    // RFC 5869 Appendix A.1
     private func verifyHKDFKnownAnswer() -> Bool {
         guard let salt = Data(hexString: "000102030405060708090a0b0c"),
               let info = Data(hexString: "f0f1f2f3f4f5f6f7f8f9"),
@@ -102,15 +118,27 @@ nonisolated struct SecurityService: SecurityServiceProtocol {
     }
 
     private func verifySessionKeySeparation() -> Bool {
-        let alice = Curve25519.KeyAgreement.PrivateKey()
-        let bob = Curve25519.KeyAgreement.PrivateKey()
-        let carol = Curve25519.KeyAgreement.PrivateKey()
-        guard let rawSecret = try? keyAgreement.sharedSecret(privateKey: alice, peerPublicKey: bob.publicKey),
-              let withBob = try? keyAgreement.deriveSessionKey(privateKey: alice, peerPublicKey: bob.publicKey),
-              let withCarol = try? keyAgreement.deriveSessionKey(privateKey: alice, peerPublicKey: carol.publicKey)
+        let alice = Party(), bob = Party()
+        let bobLater = Party(identity: bob.identity)
+        guard let first = try? alice.derive(with: bob),
+              let second = try? Party(identity: alice.identity).derive(with: bobLater)
         else { return false }
 
-        return bytes(of: withBob) != bytes(of: rawSecret) && bytes(of: withBob) != bytes(of: withCarol)
+        return bytes(of: first.sendingKey) != bytes(of: first.receivingKey)
+            && bytes(of: first.sendingKey) != bytes(of: second.sendingKey)
+            && bytes(of: first.receivingKey) != bytes(of: second.receivingKey)
+    }
+
+    private func verifyImpostorRejection() -> Bool {
+        let alice = Party(), bob = Party(), mallory = Party()
+        let malloryClaimingBob = Party(identity: mallory.identity, claimedIdentity: bob.identity.publicKey)
+
+        guard let aliceKeys = try? alice.derive(with: malloryClaimingBob),
+              let malloryKeys = try? mallory.derive(with: alice)
+        else { return false }
+
+        let malloryTag = keyAgreement.confirmationTag(for: malloryKeys.localRole, in: malloryKeys)
+        return !keyAgreement.isValidConfirmationTag(malloryTag, for: aliceKeys.localRole.peer, in: aliceKeys)
     }
 
     private func verifyAESGCMRoundTrip() -> Bool {
@@ -170,6 +198,29 @@ nonisolated struct SecurityService: SecurityServiceProtocol {
         guard !copy.isEmpty else { return copy }
         copy[copy.startIndex] ^= 0x01
         return copy
+    }
+
+    private struct Party {
+        let identity: Curve25519.KeyAgreement.PrivateKey
+        let ephemeral = Curve25519.KeyAgreement.PrivateKey()
+        let claimedIdentity: Curve25519.KeyAgreement.PublicKey
+
+        init(
+            identity: Curve25519.KeyAgreement.PrivateKey = .init(),
+            claimedIdentity: Curve25519.KeyAgreement.PublicKey? = nil
+        ) {
+            self.identity = identity
+            self.claimedIdentity = claimedIdentity ?? identity.publicKey
+        }
+
+        func derive(with remote: Party) throws(CryptoError) -> SessionKeyMaterial {
+            try KeyAgreementService().deriveSessionKeys(
+                localIdentity: identity,
+                localEphemeral: ephemeral,
+                remoteIdentity: remote.claimedIdentity,
+                remoteEphemeral: remote.ephemeral.publicKey
+            )
+        }
     }
 
     private func bytes(of material: some ContiguousBytes) -> Data {

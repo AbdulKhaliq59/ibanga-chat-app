@@ -10,9 +10,22 @@
 		21CDA9B330651D2A00F9574B /* IbangaChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = IbangaChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		21CDA9D030651D2A00F9574B /* Exceptions for "IbangaChat" folder in "IbangaChat" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 21CDA9B230651D2A00F9574B /* IbangaChat */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		21CDA9B530651D2A00F9574B /* IbangaChat */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				21CDA9D030651D2A00F9574B /* Exceptions for "IbangaChat" folder in "IbangaChat" target */,
+			);
 			path = IbangaChat;
 			sourceTree = "<group>";
 		};
@@ -256,7 +269,9 @@
 				DEVELOPMENT_TEAM = 743UK8B9CQ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = IbangaChat/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Ibanga;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Ibanga uses your local network to find nearby devices and connect to them securely.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -289,7 +304,9 @@
 				DEVELOPMENT_TEAM = 743UK8B9CQ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = IbangaChat/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Ibanga;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Ibanga uses your local network to find nearby devices and connect to them securely.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

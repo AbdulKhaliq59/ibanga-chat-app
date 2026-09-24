@@ -4,10 +4,11 @@ nonisolated struct SecurityCheck: Identifiable, Equatable, Sendable {
     enum Kind: CaseIterable, Sendable {
         case identityKeyStorage
         case x25519KnownAnswer
-        case x25519Agreement
+        case sessionAgreement
         case invalidPeerKeyRejection
         case hkdfKnownAnswer
         case sessionKeySeparation
+        case impostorRejection
         case aesGCMRoundTrip
         case tamperRejection
         case associatedDataBinding

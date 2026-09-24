@@ -16,10 +16,11 @@ struct RootView: View {
                 OnboardingView(viewModel: container.makeOnboardingViewModel())
                     .transition(.opacity)
             case .ready(let identity):
-                ConversationsView(identity: identity) {
-                    container.makeSecurityViewModel(identity: identity)
-                }
-                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
+                container.makeConversationsView(identity: identity)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
+                    .task(id: identity.fingerprint) {
+                        await container.startMessaging(with: identity)
+                    }
             case .failed(let error):
                 StartupFailureView(error: error) {
                     Task { await appState.bootstrap() }

@@ -12,4 +12,10 @@ enum IbangaIcons {
     static let failed = "xmark.circle.fill"
     static let conversations = "bubble.left.and.bubble.right"
     static let chevronRight = "chevron.right"
+    static let plus = "plus"
+    static let send = "arrow.up"
+    static let verified = "checkmark.seal.fill"
+    static let notConnected = "lock.slash"
+    static let nearby = "dot.radiowaves.left.and.right"
+    static let copy = "doc.on.doc"
 }

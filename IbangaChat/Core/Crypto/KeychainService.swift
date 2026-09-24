@@ -5,6 +5,7 @@ nonisolated struct KeychainKey: Hashable, Sendable {
     let account: String
 
     static let identityPrivateKey = KeychainKey(account: "identity.curve25519.key-agreement")
+    static let storageKey = KeychainKey(account: "storage.aes-gcm.key")
 }
 
 nonisolated enum KeychainError: Error, Equatable, Sendable {
