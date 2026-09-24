@@ -1,0 +1,15 @@
+enum IbangaIcons {
+    static let shield = "lock.shield"
+    static let shieldFilled = "lock.shield.fill"
+    static let key = "key.horizontal"
+    static let keyFilled = "key.horizontal.fill"
+    static let lock = "lock"
+    static let lockFilled = "lock.fill"
+    static let iPhone = "iphone"
+    static let checkmark = "checkmark"
+    static let checkmarkCircle = "checkmark.circle.fill"
+    static let warning = "exclamationmark.triangle"
+    static let failed = "xmark.circle.fill"
+    static let conversations = "bubble.left.and.bubble.right"
+    static let chevronRight = "chevron.right"
+}
